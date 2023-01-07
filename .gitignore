@@ -4,6 +4,9 @@
 # Dependency directories
 node_modules/
 
+# Logging files
+*.log
+
 # Other
 tokens.json
 dev/

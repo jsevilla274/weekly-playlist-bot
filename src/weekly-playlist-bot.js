@@ -1,6 +1,7 @@
 import './setup-env.js';
 import * as spotify from '../lib/spotify.js';
 import * as discord from '../lib/discord.js';
+import { logger } from './log.js';
 import process from 'node:process';
 import getUrls from 'get-urls';
 
@@ -67,7 +68,7 @@ export async function getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUr
             albums.forEach((album) => { albumCache[album.id] = album.tracks.items });
         }
     
-        // add each of the user's album's tracks to set
+        // add each of the album's tracks to user's set
         for (const albumId of spotifyIds.albums) {
             albumCache[albumId].forEach((track) => trackIdSet.add(track.id));
         }
@@ -82,7 +83,7 @@ export async function getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUr
         }
         await Promise.all(gpiPromises);
     
-        // add each of the user's playlist's tracks to set
+        // add each of the playlist's tracks to user's set
         for (const playlistId of spotifyIds.playlists) {
             playlistCache[playlistId].forEach((item) => { 
                 if (item.track) trackIdSet.add(item.track.id);
@@ -96,29 +97,60 @@ export async function getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUr
     return discordUserSpotifyTrackIds;
 }
 
+// shuffles an array *in-place*
+function shuffleArray(array) {
+    let unshuffledCount = array.length;
+    let temp, randI;
+  
+    while (unshuffledCount > 0) {
+  
+      // pick a remaining element
+      randI = Math.floor(Math.random() * unshuffledCount);
+      unshuffledCount--;
+  
+      // swap it with the "end" that stores shuffled elements
+      temp = array[unshuffledCount];
+      array[unshuffledCount] = array[randI];
+      array[randI] = temp;
+    }
+  
+    return array;
+}
+
 export function buildPlaylistFromUserTracks(discordUserSpotifyTrackIds, discordUserIdToUsername) {
     const playlistContributionMap = {};
     for (const userId of Object.keys(discordUserSpotifyTrackIds)) {
         const username = discordUserIdToUsername[userId];
         const userTrackIds = discordUserSpotifyTrackIds[userId];
         if (userTrackIds.length < 1) continue; // skip users with no tracks
+
+        // get a smaller number of tracks from user based on log_2 (at least 1)
+        let userTracksNeeded = Math.floor(Math.log(userTrackIds.length) / Math.log(2)) || 1;
     
-        // get a random track from their list to add to playlist
-        let selectedTrackId = userTrackIds[Math.floor(Math.random() * userTrackIds.length)];
-    
-        // if the random track exists in the playlist, find one that is unique to the playlist
-        if (Array.isArray(playlistContributionMap[selectedTrackId])) {
-            selectedTrackId = userTrackIds.find((trackId) => playlistContributionMap[trackId] == null);
-    
-            // if we still can't find any unique tracks, add them as a contributor to an existing track
-            if (selectedTrackId == null) {
-                selectedTrackId = playlistContributionMap[userTrackIds[0]];
-                playlistContributionMap[selectedTrackId].push(username);
+        // randomize track ids
+        shuffleArray(userTrackIds);
+
+        // go through the shuffled tracks, adding as many unique tracks as needed to the playlist
+        const nonUniqueTrackIndices = [];
+        for (let i = 0; i < userTrackIds.length && userTracksNeeded > 0; i++) {
+            const trackId = userTrackIds[i];
+            
+            if (Array.isArray(playlistContributionMap[trackId])) {
+                // track is not unique, store the index of this track for possible use later
+                nonUniqueTrackIndices.push(i);
             } else {
-                playlistContributionMap[selectedTrackId] = [username];
+                // track is unique, add to playlist
+                playlistContributionMap[trackId] = [username];
+                userTracksNeeded--;
             }
-        } else {
-            playlistContributionMap[selectedTrackId] = [username];
+        }
+
+        // if tracks are still needed, add the user as a contributor to existing tracks
+        for (let i = 0; i < nonUniqueTrackIndices.length && userTracksNeeded > 0; i++) {
+            const nonUniqueTrackI = nonUniqueTrackIndices[i];
+            const trackId = userTrackIds[nonUniqueTrackI];
+            playlistContributionMap[trackId].push(username);
+            userTracksNeeded--;
         }
     }
 
@@ -170,7 +202,7 @@ export async function preparePlaylist(playlistName, playlistDescription='') {
 
 export async function main() {
     // 1. Retrieve discord messages from last week
-    const { startOfTargetWeek: startOfCurrentWeek, startOfPreviousWeek } = getPreviousWeekDates();
+    const { startOfTargetWeek: startOfCurrentWeek, startOfPreviousWeek } = getPreviousWeekDates(); // pass in a date to test for a different week
     const discordMessages = await discord.getMessagesInChannel(process.env.DISCORD_CHANNEL_ID, startOfPreviousWeek, startOfCurrentWeek);
     
     // 2. Sift through messages, extracting spotify urls from non-bot messages. Create maps for user ID to user urls 
@@ -183,6 +215,11 @@ export async function main() {
     //    c. Playlist: Decompose into tracks, add track IDs to user's trackset
     const discordUserSpotifyTrackIds = await getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUrls);
     
+    // create week string for display purposes
+    const endOfPreviousWeek = new Date(startOfCurrentWeek.getTime());
+    endOfPreviousWeek.setDate(endOfPreviousWeek.getDate() - 1);
+    const formattedWeekStr = `${startOfPreviousWeek.toLocaleDateString('en-US')} - ${endOfPreviousWeek.toLocaleDateString('en-US')}`;
+
     if (Object.keys(discordUserSpotifyTrackIds).length > 0) {
         // 4. Create playlistContributionMap which maps one track from each userTrackList onto an array of contibutorUsernames
         const playlistContributionMap = buildPlaylistFromUserTracks(discordUserSpotifyTrackIds, discordUserIdToUsernames);
@@ -190,9 +227,7 @@ export async function main() {
         // 5. Check if named playlist exists. Save ID + url of the playlist
         //    a. If so, retrieve & delete all items in the playlist
         //    b. If not, create a new playlist with that name
-        const endOfPreviousWeek = new Date(startOfCurrentWeek.getTime());
-        endOfPreviousWeek.setDate(endOfPreviousWeek.getDate() - 1);
-        const playlistDescription = `User contributions for the week of ${startOfPreviousWeek.toLocaleDateString('en-US')} - ${endOfPreviousWeek.toLocaleDateString('en-US')}. Last updated: ${new Date().toLocaleString('en-US')}`;
+        const playlistDescription = `User contributions for the week of ${formattedWeekStr}. Last updated: ${new Date().toLocaleString('en-US')}`;
         const weeklyPlaylist = await preparePlaylist(process.env.PLAYLIST_NAME, `${playlistDescription} `);
         
         // 6. Add the songs in the playlistContributionMap onto the playlist
@@ -201,7 +236,7 @@ export async function main() {
         
         // 7. Build and send a discord message with the url
         const { items: weeklyPlaylistItems } = await spotify.getPlaylistItems(weeklyPlaylist.id);
-        const announcementMsg = `Playlist for the week of ${startOfPreviousWeek.toLocaleDateString('en-US')} - ${endOfPreviousWeek.toLocaleDateString('en-US')}\n${weeklyPlaylist.url}`;
+        const announcementMsg = `Playlist for the week of ${formattedWeekStr}\n${weeklyPlaylist.url}`;
         let createTextMessageInChannelResp = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, announcementMsg);
     
         // 8. Build and send another message with the list of songs names + contributors
@@ -217,5 +252,8 @@ export async function main() {
         contributorMsg += '```';
     
         createTextMessageInChannelResp = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, contributorMsg);
+        logger.info(`Playlist updated for the week of ${formattedWeekStr}`);
+    } else {
+        logger.info(`No contributions found for the week of ${formattedWeekStr}. Playlist was not updated.`);
     }
 }
