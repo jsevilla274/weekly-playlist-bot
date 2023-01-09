@@ -161,14 +161,14 @@ export async function preparePlaylist(playlistName, playlistDescription='') {
     // try to find the named playlist among the bot owner's playlists
     let botOwnerPlaylist;
     let searchingForPlaylist = true;
-    let playlistOffset = 0;
-    const playlistLimit = 50;
+    let searchOffset = 0;
+    const searchLimit = 50;
     while (searchingForPlaylist) {
-        let botOwnerPlaylistsResp = await spotify.getCurrentUserPlaylists(playlistOffset, playlistLimit);
+        let botOwnerPlaylistsResp = await spotify.getCurrentUserPlaylists(searchOffset, searchLimit);
         botOwnerPlaylist = botOwnerPlaylistsResp.items.find((playlist) => playlist.name === playlistName);
 
-        if (botOwnerPlaylist == null && botOwnerPlaylistsResp.items.length >= playlistLimit) {
-            playlistOffset += playlistLimit;
+        if (botOwnerPlaylist == null && botOwnerPlaylistsResp.items.length >= searchLimit) {
+            searchOffset += searchLimit;
         } else {
             searchingForPlaylist = false;
         }
@@ -198,6 +198,14 @@ export async function preparePlaylist(playlistName, playlistDescription='') {
         id: botOwnerPlaylist.id,
         url: botOwnerPlaylist.external_urls.spotify,
     };
+}
+
+export async function unpinPreviousBotPost(channelId, messagePrefix) {
+    const pinnedDiscordMessages = await discord.getPinnedMessagesInChannel(channelId);
+    const previousPinnedBotMessage = pinnedDiscordMessages.find((message) => message.author.bot && message.content.startsWith(messagePrefix));
+    if (previousPinnedBotMessage) {
+        await discord.unpinMessageInChannel(channelId, previousPinnedBotMessage.id);
+    } // else no pinned message found
 }
 
 export async function main() {
@@ -235,24 +243,31 @@ export async function main() {
         await spotify.addItemsToPlaylist(weeklyPlaylist.id, trackUris);
         
         // 7. Build and send a discord message with the url
-        const { items: weeklyPlaylistItems } = await spotify.getPlaylistItems(weeklyPlaylist.id);
-        const announcementMsg = `Playlist for the week of ${formattedWeekStr}\n${weeklyPlaylist.url}`;
-        let createTextMessageInChannelResp = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, announcementMsg);
-    
+        const announcementMsgPrefix = 'Playlist for the week of';
+        const announcementMsg = `${announcementMsgPrefix} ${formattedWeekStr}\n${weeklyPlaylist.url}`;
+        let playlistTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, announcementMsg);
+        
         // 8. Build and send another message with the list of songs names + contributors
-        let contributorMsg = 'Contributors:```\n';
+        const { items: weeklyPlaylistItems } = await spotify.getPlaylistItems(weeklyPlaylist.id);
+        let contributorsMsg = 'Contributors:```\n';
         let contributorIndex = 1;
         weeklyPlaylistItems.forEach((item) => {
             const trackId = item.track?.id;
             if (playlistContributionMap[trackId]) {
                 const contributors = playlistContributionMap[trackId].join(', ');
-                contributorMsg += `${contributorIndex++}. ${item.track.name} - ${contributors}\n`;
+                const trackArtists = item.track.artists.map((artist) => artist.name).join(', ');
+                contributorsMsg += `${contributorIndex++}. ${item.track.name} by ${trackArtists} - ${contributors}\n`;
             }
         });
-        contributorMsg += '```';
-    
-        createTextMessageInChannelResp = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, contributorMsg);
+        contributorsMsg += '```';
+        
+        let contributorsTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, contributorsMsg);
         logger.info(`Playlist updated for the week of ${formattedWeekStr}`);
+        
+        // 9. Unpin the previous playlist message (if it exists) and pin the new one
+        await unpinPreviousBotPost(process.env.DISCORD_CHANNEL_ID, announcementMsgPrefix);
+        await discord.pinMessageInChannel(process.env.DISCORD_CHANNEL_ID, playlistTextMessage.id);
+
     } else {
         logger.info(`No contributions found for the week of ${formattedWeekStr}. Playlist was not updated.`);
     }
