@@ -5,6 +5,10 @@ import { logger } from './log.js';
 import process from 'node:process';
 import getUrls from 'get-urls';
 
+/**
+ * @param {Date|string} targetDate 
+ * @returns {{startOfTargetWeek: Date, startOfPreviousWeek: Date}}
+ */
 export function getPreviousWeekDates(targetDate) {
     let startOfTargetWeek;
     if (typeof targetDate === 'string') {
@@ -20,6 +24,17 @@ export function getPreviousWeekDates(targetDate) {
     return { startOfTargetWeek, startOfPreviousWeek };
 }
 
+/** @typedef {Object.<string,string[]>} DiscordUserIdToSpotifyUrlsMap */
+
+/**
+ * maps discord user ID to discord username
+ * @typedef {Object.<string,string[]>} DiscordUserIdToUsernameMap
+ */
+
+/**
+ * @param {Object[]} discordMessages 
+ * @returns {{discordUserSpotifyUrls: DiscordUserIdToSpotifyUrlsMap, discordUserIdToUsernames: DiscordUserIdToUsernameMap}} maps of discord user ID to urls and discord username respectively
+ */
 export function extractSpotifyUrlsAndDiscordUserData(discordMessages) {
     const discordUserSpotifyUrls = {};
     const discordUserIdToUsernames = {};
@@ -51,6 +66,12 @@ export function extractSpotifyUrlsAndDiscordUserData(discordMessages) {
     return { discordUserSpotifyUrls, discordUserIdToUsernames };
 }
 
+/** @typedef {Object.<string,string[]>} DiscordUserIdToSpotifyTrackIdsMap */
+
+/**
+ * @param {DiscordUserIdToSpotifyUrlsMap} discordUserSpotifyUrls 
+ * @returns {DiscordUserIdToSpotifyTrackIdsMap} 
+ */
 export async function getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUrls) {
     const albumCache = {};
     const playlistCache = {};
@@ -97,7 +118,11 @@ export async function getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUr
     return discordUserSpotifyTrackIds;
 }
 
-// shuffles an array *in-place*
+/**
+ * shuffles an array *in-place*
+ * @param {any[]} array 
+ * @returns {any[]} the same passed in array
+ */
 function shuffleArray(array) {
     let unshuffledCount = array.length;
     let temp, randI;
@@ -117,6 +142,16 @@ function shuffleArray(array) {
     return array;
 }
 
+/** 
+ * maps a spotify track id to an array of discord usernames
+ * @typedef {Object.<string, string[]>} SpotifyTrackToDiscordUsernamesMap 
+ */
+
+/**
+ * @param {DiscordUserIdToSpotifyTrackIdsMap} discordUserSpotifyTrackIds 
+ * @param {DiscordUserIdToUsernameMap} discordUserIdToUsername 
+ * @returns {SpotifyTrackToDiscordUsernamesMap}
+ */
 export function buildPlaylistFromUserTracks(discordUserSpotifyTrackIds, discordUserIdToUsername) {
     const playlistContributionMap = {};
     for (const userId of Object.keys(discordUserSpotifyTrackIds)) {
@@ -157,6 +192,12 @@ export function buildPlaylistFromUserTracks(discordUserSpotifyTrackIds, discordU
     return playlistContributionMap;
 } 
 
+/**
+ * Creates/clears playlist so that new items may be added into it
+ * @param {string} playlistName 
+ * @param {?string} playlistDescription 
+ * @returns {{id: string, url: string}} prepared playlist data
+ */
 export async function preparePlaylist(playlistName, playlistDescription='') {
     // try to find the named playlist among the bot owner's playlists
     let botOwnerPlaylist;
@@ -200,6 +241,11 @@ export async function preparePlaylist(playlistName, playlistDescription='') {
     };
 }
 
+/**
+ * Finds the previously pinned bot post (if it exists) and unpins it
+ * @param {string} channelId id of the discord channel to search for pins
+ * @param {string} messagePrefix the beginning part of the bot message used to identify the previous pin
+ */
 export async function unpinPreviousBotPost(channelId, messagePrefix) {
     const pinnedDiscordMessages = await discord.getPinnedMessagesInChannel(channelId);
     const previousPinnedBotMessage = pinnedDiscordMessages.find((message) => message.author.bot && message.content.startsWith(messagePrefix));
