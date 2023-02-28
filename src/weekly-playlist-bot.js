@@ -66,7 +66,15 @@ export function extractSpotifyUrlsAndDiscordUserData(discordMessages) {
     return { discordUserSpotifyUrls, discordUserIdToUsernames };
 }
 
-/** @typedef {Object.<string,string[]>} DiscordUserIdToSpotifyTrackIdsMap */
+/**
+ * @typedef UserTrackIds
+ * @type {object}
+ * @property {string[]} singleTrackIds - track ids obtained from direct track links
+ * @property {string[]} albumTrackIds - track ids obtained from playlist links
+ * @property {string[]} playlistTrackIds - track ids obtained from album links
+ *
+ * @typedef {Object.<string,UserTrackIds>} DiscordUserIdToSpotifyTrackIdsMap 
+*/
 
 /**
  * @param {DiscordUserIdToSpotifyUrlsMap} discordUserSpotifyUrls 
@@ -78,9 +86,12 @@ export async function getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUr
     const discordUserSpotifyTrackIds = {};
     for (const userId of Object.keys(discordUserSpotifyUrls)) {
         const spotifyIds = spotify.getIdsFromExternalUrls(discordUserSpotifyUrls[userId]);
-        // add tracks to set
-        const trackIdSet = new Set(spotifyIds.tracks);
-    
+        // add tracks to sets (implicitly discards duplicates)
+        const singleTrackIdsSet = new Set(spotifyIds.tracks);
+        const playlistTrackIdsSet = new Set();
+        const albumTrackIdsSet = new Set();
+        let uniqueTrackCount = singleTrackIdsSet.size;
+
         // only query albums not in the cache
         const albumIdsToQuery = spotifyIds.albums.filter((albumId) => albumCache[albumId] == null);
         if (albumIdsToQuery.length > 0) {
@@ -89,11 +100,18 @@ export async function getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUr
             albums.forEach((album) => { albumCache[album.id] = album.tracks.items });
         }
     
-        // add each of the album's tracks to user's set
+        // add album tracks to user's album track set
         for (const albumId of spotifyIds.albums) {
-            albumCache[albumId].forEach((track) => trackIdSet.add(track.id));
+            albumCache[albumId].forEach((track) => {
+                if (albumTrackIdsSet.has(track.id) === false) {
+                    albumTrackIdsSet.add(track.id);
+                    
+                    const isUniqueTrack = singleTrackIdsSet.has(track.id) === false;
+                    if (isUniqueTrack) uniqueTrackCount++;
+                }
+            });
         }
-    
+
         // only query playlists not in the cache
         const playlistIdsToQuery = spotifyIds.playlists.filter((playlistId) => playlistCache[playlistId] == null);
         const gpiPromises = [];
@@ -104,15 +122,25 @@ export async function getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUr
         }
         await Promise.all(gpiPromises);
     
-        // add each of the playlist's tracks to user's set
+        // add playlist tracks to user's playlist track set
         for (const playlistId of spotifyIds.playlists) {
             playlistCache[playlistId].forEach((item) => { 
-                if (item.track) trackIdSet.add(item.track.id);
+                if (item.track && playlistTrackIdsSet.has(item.track.id) === false) {
+                    playlistTrackIdsSet.add(item.track.id);
+                    
+                    const isUniqueTrack = singleTrackIdsSet.has(item.track.id) === false && albumTrackIdsSet.has(item.track.id) === false;
+                    if (isUniqueTrack) uniqueTrackCount++;
+                }
             });
         }
     
         // add track IDs to user map
-        discordUserSpotifyTrackIds[userId] = [...trackIdSet];
+        discordUserSpotifyTrackIds[userId] = {
+            singleTrackIds: [...singleTrackIdsSet],
+            albumTrackIds: [...albumTrackIdsSet],
+            playlistTrackIds: [...playlistTrackIdsSet],
+            uniqueTrackCount,
+        };
     }
 
     return discordUserSpotifyTrackIds;
@@ -156,36 +184,52 @@ export function buildPlaylistFromUserTracks(discordUserSpotifyTrackIds, discordU
     const playlistContributionMap = {};
     for (const userId of Object.keys(discordUserSpotifyTrackIds)) {
         const username = discordUserIdToUsername[userId];
-        const userTrackIds = discordUserSpotifyTrackIds[userId];
-        if (userTrackIds.length < 1) continue; // skip users with no tracks
+        const { singleTrackIds, playlistTrackIds, albumTrackIds, uniqueTrackCount } = discordUserSpotifyTrackIds[userId];
+
+        // skip users with no tracks
+        if (uniqueTrackCount < 1) continue; 
 
         // get a smaller number of tracks from user based on log_2 (at least 1)
-        let userTracksNeeded = Math.floor(Math.log(userTrackIds.length) / Math.log(2)) || 1;
-    
-        // randomize track ids
-        shuffleArray(userTrackIds);
+        let userTracksNeeded = Math.floor(Math.log(uniqueTrackCount) / Math.log(2)) || 1;
 
         // go through the shuffled tracks, adding as many unique tracks as needed to the playlist
-        const nonUniqueTrackIndices = [];
-        for (let i = 0; i < userTrackIds.length && userTracksNeeded > 0; i++) {
-            const trackId = userTrackIds[i];
-            
-            if (Array.isArray(playlistContributionMap[trackId])) {
-                // track is not unique, store the index of this track for possible use later
-                nonUniqueTrackIndices.push(i);
+        const nonUniqueContributions = [];
+        let trackIdArr = shuffleArray(singleTrackIds); // shuffle before use
+        for (let i = 0; i <= trackIdArr.length && userTracksNeeded > 0; i++) {
+            if (i === trackIdArr.length) {
+                // swap track arr by track array "priority" (single > playlist > album)
+                if (trackIdArr === singleTrackIds) {
+                    i = -1;
+                    trackIdArr = shuffleArray(playlistTrackIds);
+                } else if (trackIdArr === playlistTrackIds) {
+                    i = -1;
+                    trackIdArr = shuffleArray(albumTrackIds);
+                } // else exit loop
             } else {
-                // track is unique, add to playlist
-                playlistContributionMap[trackId] = [username];
-                userTracksNeeded--;
+                // add tracks to playlist
+                const trackId = trackIdArr[i];
+                const trackIdHasContributors = Array.isArray(playlistContributionMap[trackId]); 
+    
+                if (trackIdHasContributors) {
+                    // save in case we run out of unique track contributions
+                    nonUniqueContributions.push(trackId);
+                } else {
+                    playlistContributionMap[trackId] = [username];
+                    userTracksNeeded--;
+                }
             }
         }
 
         // if tracks are still needed, add the user as a contributor to existing tracks
-        for (let i = 0; i < nonUniqueTrackIndices.length && userTracksNeeded > 0; i++) {
-            const nonUniqueTrackI = nonUniqueTrackIndices[i];
-            const trackId = userTrackIds[nonUniqueTrackI];
-            playlistContributionMap[trackId].push(username);
-            userTracksNeeded--;
+        for (let i = 0; i < nonUniqueContributions.length && userTracksNeeded > 0; i++) {
+            const trackId = nonUniqueContributions[i];
+            const trackIdContibutors = playlistContributionMap[trackId];
+
+            // only add user as contributor if not already a contributor (avoids duplicate contributions)
+            if (trackIdContibutors.includes(username) === false) {
+                playlistContributionMap[trackId].push(username);
+                userTracksNeeded--;
+            }
         }
     }
 
@@ -274,47 +318,49 @@ export async function main() {
     endOfPreviousWeek.setDate(endOfPreviousWeek.getDate() - 1);
     const formattedWeekStr = `${startOfPreviousWeek.toLocaleDateString('en-US')} - ${endOfPreviousWeek.toLocaleDateString('en-US')}`;
 
-    if (Object.keys(discordUserSpotifyTrackIds).length > 0) {
-        // 4. Create playlistContributionMap which maps one track from each userTrackList onto an array of contibutorUsernames
-        const playlistContributionMap = buildPlaylistFromUserTracks(discordUserSpotifyTrackIds, discordUserIdToUsernames);
-        
-        // 5. Check if named playlist exists. Save ID + url of the playlist
-        //    a. If so, retrieve & delete all items in the playlist
-        //    b. If not, create a new playlist with that name
-        const playlistDescription = `User contributions for the week of ${formattedWeekStr}. Last updated: ${new Date().toLocaleString('en-US')}`;
-        const weeklyPlaylist = await preparePlaylist(process.env.PLAYLIST_NAME, `${playlistDescription} `);
-        
-        // 6. Add the songs in the playlistContributionMap onto the playlist
-        const trackUris = Object.keys(playlistContributionMap).map((trackId) => `spotify:track:${trackId}`);
-        await spotify.addItemsToPlaylist(weeklyPlaylist.id, trackUris);
-        
-        // 7. Build and send a discord message with the url
-        const announcementMsgPrefix = 'Playlist for the week of';
-        const announcementMsg = `${announcementMsgPrefix} ${formattedWeekStr}\n${weeklyPlaylist.url}`;
-        let playlistTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, announcementMsg);
-        
-        // 8. Build and send another message with the list of songs names + contributors
-        const { items: weeklyPlaylistItems } = await spotify.getPlaylistItems(weeklyPlaylist.id);
-        let contributorsMsg = 'Contributors:```\n';
-        let contributorIndex = 1;
-        weeklyPlaylistItems.forEach((item) => {
-            const trackId = item.track?.id;
-            if (playlistContributionMap[trackId]) {
-                const contributors = playlistContributionMap[trackId].join(', ');
-                const trackArtists = item.track.artists.map((artist) => artist.name).join(', ');
-                contributorsMsg += `${contributorIndex++}. ${item.track.name} by ${trackArtists} - ${contributors}\n`;
-            }
-        });
-        contributorsMsg += '```';
-        
-        let contributorsTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, contributorsMsg);
-        logger.info(`Playlist updated for the week of ${formattedWeekStr}`);
-        
-        // 9. Unpin the previous playlist message (if it exists) and pin the new one
-        await unpinPreviousBotPost(process.env.DISCORD_CHANNEL_ID, announcementMsgPrefix);
-        await discord.pinMessageInChannel(process.env.DISCORD_CHANNEL_ID, playlistTextMessage.id);
-
-    } else {
+    // check if contributions exist, existing if none found
+    const contributionsExist = Object.keys(discordUserSpotifyTrackIds).some((userId) => discordUserSpotifyTrackIds[userId].uniqueTrackCount > 0);
+    if (contributionsExist === false) {
         logger.info(`No contributions found for the week of ${formattedWeekStr}. Playlist was not updated.`);
+        return; // exit main
     }
+
+    // 4. Create playlistContributionMap which maps one track from each userTrackList onto an array of contibutorUsernames
+    const playlistContributionMap = buildPlaylistFromUserTracks(discordUserSpotifyTrackIds, discordUserIdToUsernames);
+    
+    // 5. Check if named playlist exists. Save ID + url of the playlist
+    //    a. If so, retrieve & delete all items in the playlist
+    //    b. If not, create a new playlist with that name
+    const playlistDescription = `User contributions for the week of ${formattedWeekStr}. Last updated: ${new Date().toLocaleString('en-US')}`;
+    const weeklyPlaylist = await preparePlaylist(process.env.PLAYLIST_NAME, `${playlistDescription} `);
+    
+    // 6. Add the songs in the playlistContributionMap onto the playlist
+    const trackUris = Object.keys(playlistContributionMap).map((trackId) => `spotify:track:${trackId}`);
+    await spotify.addItemsToPlaylist(weeklyPlaylist.id, trackUris);
+    
+    // 7. Build and send a discord message with the url
+    const announcementMsgPrefix = 'Playlist for the week of';
+    const announcementMsg = `${announcementMsgPrefix} ${formattedWeekStr}\n${weeklyPlaylist.url}`;
+    let playlistTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, announcementMsg);
+    
+    // 8. Build and send another message with the list of songs names + contributors
+    const { items: weeklyPlaylistItems } = await spotify.getPlaylistItems(weeklyPlaylist.id);
+    let contributorsMsg = 'Contributors:```\n';
+    let contributorIndex = 1;
+    weeklyPlaylistItems.forEach((item) => {
+        const trackId = item.track?.id;
+        if (playlistContributionMap[trackId]) {
+            const contributors = playlistContributionMap[trackId].join(', ');
+            const trackArtists = item.track.artists.map((artist) => artist.name).join(', ');
+            contributorsMsg += `${contributorIndex++}. ${item.track.name} by ${trackArtists} - ${contributors}\n`;
+        }
+    });
+    contributorsMsg += '```';
+    
+    let contributorsTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, contributorsMsg);
+    logger.info(`Playlist updated for the week of ${formattedWeekStr}`);
+    
+    // 9. Unpin the previous playlist message (if it exists) and pin the new one
+    await unpinPreviousBotPost(process.env.DISCORD_CHANNEL_ID, announcementMsgPrefix);
+    await discord.pinMessageInChannel(process.env.DISCORD_CHANNEL_ID, playlistTextMessage.id);
 }
