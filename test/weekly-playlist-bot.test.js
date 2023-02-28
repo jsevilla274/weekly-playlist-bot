@@ -259,7 +259,7 @@ describe('getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUrls)', () => 
         const userSpotifyTrackIds = await wpb.getTrackIdsFromDiscordUserSpotifyUrls(testData);
 
         // assert
-        let testUserTrackIds = userSpotifyTrackIds["559136461311417979"];
+        let testUserTrackIds = userSpotifyTrackIds["559136461311417979"].singleTrackIds;
         expect(testUserTrackIds.length).toBe(3);
         expect(testUserTrackIds.includes('6e3lmEDl5f9MNjgZjbNVN5')).toBe(true);
         expect(testUserTrackIds.includes('3djWN7th03XZtmF5s3C1Lv')).toBe(true);
@@ -279,7 +279,7 @@ describe('getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUrls)', () => 
         const discordUserSpotifyTrackIds = await wpb.getTrackIdsFromDiscordUserSpotifyUrls(testData);
 
         // assert
-        let testUserTrackIds = discordUserSpotifyTrackIds["559136461311417979"];
+        let testUserTrackIds = discordUserSpotifyTrackIds["559136461311417979"].albumTrackIds;
         expect(testUserTrackIds.length).toBe(25);
         expect(testUserTrackIds.includes('1QixTwDZCcfBzA7QMyont0')).toBe(true); // from 1st album
         expect(testUserTrackIds.includes('4IEoWpnV0k58TWF5hkta6D')).toBe(true); // from 2nd album
@@ -298,7 +298,7 @@ describe('getTrackIdsFromDiscordUserSpotifyUrls(discordUserSpotifyUrls)', () => 
         const discordUserSpotifyTrackIds = await wpb.getTrackIdsFromDiscordUserSpotifyUrls(testData);
 
         // assert
-        let testUserTrackIds = discordUserSpotifyTrackIds["559136461311417979"];
+        let testUserTrackIds = discordUserSpotifyTrackIds["559136461311417979"].playlistTrackIds;
         expect(testUserTrackIds.length).toBe(33);
         expect(testUserTrackIds.includes('4uLU6hMCjMI75M1A2tKUQC')).toBe(true); // from 1st playlist
         expect(testUserTrackIds.includes('7zAt4tdL44D3VuzsvM0N8n')).toBe(true); // from 2nd playlist
