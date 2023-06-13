@@ -35,7 +35,7 @@ export function getPreviousWeekDates(targetDate) {
  * @param {Object[]} discordMessages 
  * @returns {{discordUserSpotifyUrls: DiscordUserIdToSpotifyUrlsMap, discordUserIdToUsernames: DiscordUserIdToUsernameMap}} maps of discord user ID to urls and discord username respectively
  */
-export function extractSpotifyUrlsAndDiscordUserData(discordMessages) {
+export async function extractSpotifyUrlsAndDiscordUserData(discordMessages) {
     const discordUserSpotifyUrls = {};
     const discordUserIdToUsernames = {};
 
@@ -47,8 +47,16 @@ export function extractSpotifyUrlsAndDiscordUserData(discordMessages) {
         // Find urls in the message content
         let spotifyUrls = [];
         for (const url of getUrls(message.content, { removeQueryParameters: true })) {
-            if (url.includes('open.spotify.com')) {
+            if (url.includes(spotify.mainDomain)) {
                 spotifyUrls.push(url);
+            } else if (spotify.shortenedDomains.some((sd) => url.includes(sd))) {
+                // try to get a long url from shortened urls
+                try {
+                    let longURL = await spotify.getLongURL(url);
+                    spotifyUrls.push(longURL);
+                } catch (error) {
+                    logger.warn(error.message);
+                }
             }
         }
 
@@ -305,7 +313,7 @@ export async function main() {
     
     // 2. Sift through messages, extracting spotify urls from non-bot messages. Create maps for user ID to user urls 
     // and user ID to usernames
-    const { discordUserSpotifyUrls, discordUserIdToUsernames } = extractSpotifyUrlsAndDiscordUserData(discordMessages);
+    const { discordUserSpotifyUrls, discordUserIdToUsernames } = await extractSpotifyUrlsAndDiscordUserData(discordMessages);
     
     // 3. Parse IDs from spotify urls handling each ID type as follows
     //    a. Track: Add track IDs to the user's trackset
