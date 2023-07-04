@@ -348,24 +348,24 @@ export async function main() {
     
     // 7. Build and send a discord message with the url
     const announcementMsgPrefix = 'Playlist for the week of';
-    const announcementMsg = `${announcementMsgPrefix} ${formattedWeekStr}\n${weeklyPlaylist.url}`;
+    const announcementMsg = `## ${announcementMsgPrefix} ${formattedWeekStr}\n${weeklyPlaylist.url}`;
     let playlistTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, announcementMsg);
     
     // 8. Build and send another message with the list of songs names + contributors
     const { items: weeklyPlaylistItems } = await spotify.getPlaylistItems(weeklyPlaylist.id);
-    let contributorsMsg = 'Contributors:```\n';
-    let contributorIndex = 1;
+    let contributionsMsg = 'Contributions:```\n';
+    let contributionIndex = 1;
     weeklyPlaylistItems.forEach((item) => {
         const trackId = item.track?.id;
         if (playlistContributionMap[trackId]) {
             const contributors = playlistContributionMap[trackId].join(', ');
             const trackArtists = item.track.artists.map((artist) => artist.name).join(', ');
-            contributorsMsg += `${contributorIndex++}. ${item.track.name} by ${trackArtists} - ${contributors}\n`;
+            contributionsMsg += `${contributionIndex++}. ${item.track.name} by ${trackArtists} — ${contributors}\n`;
         }
     });
-    contributorsMsg += '```';
+    contributionsMsg += '```';
     
-    let contributorsTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, contributorsMsg);
+    let contributionsTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, contributionsMsg);
     logger.info(`Playlist updated for the week of ${formattedWeekStr}`);
     
     // 9. Unpin the previous playlist message (if it exists) and pin the new one
