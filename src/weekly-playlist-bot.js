@@ -347,8 +347,8 @@ export async function main() {
     await spotify.addItemsToPlaylist(weeklyPlaylist.id, trackUris);
     
     // 7. Build and send a discord message with the url
-    const announcementMsgPrefix = 'Playlist for the week of';
-    const announcementMsg = `## ${announcementMsgPrefix} ${formattedWeekStr}\n${weeklyPlaylist.url}`;
+    const announcementMsgPrefix = '## Playlist for the week of';
+    const announcementMsg = `${announcementMsgPrefix} ${formattedWeekStr}\n${weeklyPlaylist.url}`;
     let playlistTextMessage = await discord.createTextMessageInChannel(process.env.DISCORD_CHANNEL_ID, announcementMsg);
     
     // 8. Build and send another message with the list of songs names + contributors
@@ -370,5 +370,5 @@ export async function main() {
     
     // 9. Unpin the previous playlist message (if it exists) and pin the new one
     await unpinPreviousBotPost(process.env.DISCORD_CHANNEL_ID, announcementMsgPrefix);
-    await discord.pinMessageInChannel(process.env.DISCORD_CHANNEL_ID, playlistTextMessage.id);
+    await discord.pinMessageInChannel(process.env.DISCORD_CHANNEL_ID, playlistTextMessage.id, true);
 }
