@@ -34,6 +34,6 @@ export const logger = createLogger({
     ),
     transports: [
         new transports.Console(),
-        new transports.File({ filename: path.join(currentDirname, '..', 'info.log') }),
+        new transports.File({ filename: path.resolve(currentDirname, '..', 'info.log') }),
     ]
 });
